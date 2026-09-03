@@ -67,11 +67,13 @@ import {
   requestKeyNamespace,
 } from "./request-kind.js";
 import {
-  addUniqueAssistantUsage,
+  addUniqueAssistantUsageState,
   formatCompactNote,
-  resolveTurnUsage,
+  resolveOpenCodeUsage,
   usageFromAssistantEvent,
   usageFromSdkResult,
+  usageFromSdkTurnResult,
+  type AssistantUsageState,
   type OpenAIUsage,
 } from "./usage.js";
 
@@ -922,7 +924,10 @@ async function collectTurnResponse(
 
   let content = "";
   let reasoning = "";
-  let turnUsage: OpenAIUsage | null = null;
+  let usageState: AssistantUsageState = {
+    aggregate: null,
+    latest: bridge.lastAssistantUsage ?? null,
+  };
   let resultUsage: OpenAIUsage | null = null;
   let lastErrorNorm: string | null = null;
   let errorText: string | null = null;
@@ -949,12 +954,13 @@ async function collectTurnResponse(
       } else if (mapped.kind === "reasoning") {
         if (!suppressReasoning) reasoning += mapped.text;
       } else if (mapped.kind === "usage-delta") {
-        turnUsage = addUniqueAssistantUsage(
-          turnUsage,
+        usageState = addUniqueAssistantUsageState(
+          usageState,
           mapped.usage,
           mapped.messageId,
           bridge.seenAssistantUsageIds,
         );
+        if (usageState.latest) bridge.lastAssistantUsage = usageState.latest;
       } else if (mapped.kind === "usage") {
         resultUsage = mapped.usage;
       } else if (mapped.kind === "error") {
@@ -972,7 +978,7 @@ async function collectTurnResponse(
     noteError(message);
   }
 
-  const usage = resolveTurnUsage(turnUsage, resultUsage);
+  const usage = resolveOpenCodeUsage(usageState, resultUsage);
 
   // Buffered responses have not committed HTTP headers yet. Even if an agent
   // produced partial work first, preserve the real 429 so OpenCode starts its
@@ -1248,7 +1254,10 @@ function streamOpenAIResponse(
       });
 
       let finishReason: string | null = "stop";
-      let turnUsage: OpenAIUsage | null = null;
+      let usageState: AssistantUsageState = {
+        aggregate: null,
+        latest: bridge.lastAssistantUsage ?? null,
+      };
       let resultUsage: OpenAIUsage | null = null;
       let lastErrorNorm: string | null = null;
       const sendError = (text: string) => {
@@ -1362,12 +1371,13 @@ function streamOpenAIResponse(
           }
 
           if (mapped.kind === "usage-delta") {
-            turnUsage = addUniqueAssistantUsage(
-              turnUsage,
+            usageState = addUniqueAssistantUsageState(
+              usageState,
               mapped.usage,
               mapped.messageId,
               bridge.seenAssistantUsageIds,
             );
+            if (usageState.latest) bridge.lastAssistantUsage = usageState.latest;
           }
 
           if (mapped.kind === "usage") {
@@ -1401,7 +1411,7 @@ function streamOpenAIResponse(
         finishReason = "stop";
       }
 
-      const usage = resolveTurnUsage(turnUsage, resultUsage);
+      const usage = resolveOpenCodeUsage(usageState, resultUsage);
       if (!streamClosed) {
         send({
           id: completionId,
@@ -1586,7 +1596,16 @@ function mapSdkEvent(event: unknown): MappedEvent {
   }
 
   if (e.type === "result") {
-    const usage = usageFromSdkResult(event);
+    const turnUsage = usageFromSdkTurnResult(event);
+    const accountingUsage = usageFromSdkResult(event);
+    const usage = turnUsage
+      ? {
+          ...turnUsage,
+          ...(accountingUsage?.model_usage !== undefined
+            ? { model_usage: accountingUsage.model_usage }
+            : {}),
+        }
+      : null;
     if (e.is_error) {
       const text =
         typeof e.result === "string"

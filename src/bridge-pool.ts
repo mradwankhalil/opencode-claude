@@ -3,6 +3,7 @@
  * (Cursor bridge-pool pattern).
  */
 import type { ClaudeQueryHandle } from "./query.js";
+import type { OpenAIUsage } from "./usage.js";
 
 export type ParkedToolCall = {
   id: string;
@@ -19,6 +20,8 @@ export type ParkedBridge = {
   pendingTools: Map<string, ParkedToolCall>;
   /** SDK assistant messages whose usage was already reported to OpenCode. */
   seenAssistantUsageIds: Set<string>;
+  /** Latest assistant usage, retained for replay-only tool continuations. */
+  lastAssistantUsage?: OpenAIUsage;
   createdAt: number;
   /** Continues consuming the SDK stream after tools resolve. */
   continueStream?: () => AsyncGenerator<unknown, void, unknown>;
