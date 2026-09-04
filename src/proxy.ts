@@ -356,9 +356,15 @@ async function handleChatCompletions(
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const metaKind = detectMetaRequestKind(messages);
   const sessionHeader = req.headers.get(SESSION_HEADER);
+  const baseConversationKey =
+    sessionHeader || conversationKeyFromMessages(messages);
   const conversationKey =
-    requestKeyNamespace(metaKind) +
-    (sessionHeader || conversationKeyFromMessages(messages));
+    requestKeyNamespace(metaKind) + baseConversationKey;
+  if (metaKind === "summary") {
+    // OpenCode has compacted its history; resuming the old Claude session would
+    // restore the pre-compaction context and make the next usage snapshot jump.
+    clearForeignSessionId(baseConversationKey);
+  }
   const selection = selectionFromRequest(req, body);
   const model = resolveClaudeModelId(selection.modelId);
   const stream = body.stream !== false;
