@@ -711,6 +711,33 @@ async function main() {
     ];
     assert.equal(detectMetaRequestKind(summaryMessages), "summary");
 
+    const actualOpenCodeUpdateSummaryPrompt = [
+      "Here is the conversation so far:",
+      "<conversation>",
+      "User: Continue the implementation.",
+      "</conversation>",
+      "Here is the summary of the conversation before the <conversation> above:",
+      "<prior-summary>",
+      "## Objective\n- Continue the implementation",
+      "</prior-summary>",
+      "The <prior-summary> summarizes everything that happened before the <conversation>. Construct a new summary that combines both.",
+      "The <prior-summary> is discarded after this response, so preserve important information.",
+      "When combining:",
+      "- Preserve decisions and current state.",
+      "- Remove obsolete details.",
+      "Output exactly the Markdown structure shown inside <template> and keep the section order unchanged.",
+    ].join("\n");
+    assert.equal(
+      detectMetaRequestKind([{ role: "user", content: actualOpenCodeUpdateSummaryPrompt }]),
+      "summary",
+    );
+    assert.equal(
+      detectMetaRequestKind([
+        { role: "user", content: "Explain what the <prior-summary> tag means in OpenCode." },
+      ]),
+      null,
+    );
+
     const normalMessages = [
       { role: "system", content: "You are a coding assistant." },
       { role: "user", content: "fix a bug" },
