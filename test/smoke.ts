@@ -4,6 +4,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { fileURLToPath } from "node:url";
+
+const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 async function main() {
   const { buildClaudeCodeChildEnv } = await import("../src/auth-env.ts");
@@ -225,20 +228,22 @@ async function main() {
     const home = mkdtempSync(join(tmpdir(), "oc-claude-home-"));
     const binDir = join(home, ".local", "bin");
     mkdirSync(binDir, { recursive: true });
-    const fake = join(binDir, "claude");
+    const fake = join(
+      binDir,
+      process.platform === "win32" ? "claude.cmd" : "claude",
+    );
     writeFileSync(
       fake,
-      '#!/bin/sh\necho "2.1.226 (Claude Code)"\n',
+      process.platform === "win32"
+        ? '@echo off\r\necho 2.1.226 (Claude Code)\r\n'
+        : '#!/bin/sh\necho "2.1.226 (Claude Code)"\n',
       { mode: 0o755 },
     );
     chmodSync(fake, 0o755);
 
     assert.equal(resolveClaudeCli({ PATH: "/usr/bin:/bin", HOME: home }), fake);
     // And PATH itself still wins when the CLI is on it.
-    assert.equal(
-      resolveClaudeCli({ PATH: "/usr/bin:/bin", HOME: home }).length > 0,
-      true,
-    );
+    assert.ok(resolveClaudeCli({ PATH: "/usr/bin:/bin", HOME: home }));
   }
 
   // The one-click install path: official npm package, script as fallback.
@@ -729,7 +734,7 @@ async function main() {
         `import { log } from "./src/log.ts"; log.info("SILENT_INFO"); log.error("ALWAYS_ERROR");`,
       ],
       {
-        cwd: new URL("..", import.meta.url).pathname,
+        cwd: PACKAGE_ROOT,
         encoding: "utf8",
         env: { ...process.env, OPENCODE_CLAUDE_DEBUG: "0" },
       },
@@ -745,7 +750,7 @@ async function main() {
         `import { log } from "./src/log.ts"; log.info("DEBUG_INFO", { ok: true });`,
       ],
       {
-        cwd: new URL("..", import.meta.url).pathname,
+        cwd: PACKAGE_ROOT,
         encoding: "utf8",
         env: { ...process.env, OPENCODE_CLAUDE_DEBUG: "1" },
       },
@@ -1835,15 +1840,26 @@ async function main() {
     // child processes that hard-block the host's event loop on every query.
     const binDir = mkdtempSync(joinPath(tmpdir(), "oc-claude-bin-"));
     try {
-      const fakeCli = joinPath(binDir, "claude");
-      writeFileSync(fakeCli, "#!/bin/sh\necho 9.9.9-smoke\n");
+      const fakeCli = joinPath(
+        binDir,
+        process.platform === "win32" ? "claude.cmd" : "claude",
+      );
+      writeFileSync(
+        fakeCli,
+        process.platform === "win32"
+          ? "@echo off\r\necho 9.9.9-smoke\r\n"
+          : "#!/bin/sh\necho 9.9.9-smoke\n",
+      );
       chmodSync(fakeCli, 0o755);
       // HOME points at the temp dir so the well-known-location fallback
       // (~/.local/bin/claude on this dev box) cannot mask a negative result.
       const env = { PATH: binDir, HOME: binDir };
       resetClaudeCliResolutionCache();
       const first = resolveClaudeCli(env);
-      assert.ok(first && first.endsWith("claude"), "fake CLI resolved");
+      assert.ok(
+        first && /[\\/]claude(?:\.cmd|\.exe|\.bat)?$/i.test(first),
+        "fake CLI resolved",
+      );
       unlinkSync(fakeCli);
       const second = resolveClaudeCli(env);
       assert.equal(second, first, "resolution must be memoized");
@@ -1863,7 +1879,7 @@ async function main() {
 
   // TypeScript build
   const build = spawnSync("bun", ["run", "build"], {
-    cwd: new URL("..", import.meta.url).pathname,
+    cwd: PACKAGE_ROOT,
     encoding: "utf8",
   });
   if (build.status !== 0) {
