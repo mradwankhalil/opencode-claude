@@ -61,7 +61,8 @@ export function isSummaryGenerationRequest(messages: MessageLike[]): boolean {
     ) ||
     user.includes("anchored summary from the conversation history") ||
     user.includes("anchored summary below using the conversation history") ||
-    user.includes("<previous-summary>")
+    user.includes("<previous-summary>") ||
+    user.includes("<prior-summary>")
   );
 }
 

@@ -10,7 +10,9 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import {
+  clearAllBridges,
   deleteBridge,
+  deleteBridgesByConversation,
   findBridgeByConversation,
   findBridgeByPendingTool,
   putBridge,
@@ -61,6 +63,7 @@ import {
   withConversationContext,
   type SdkUserPrompt,
 } from "./prompt.js";
+import { createClaudePromptInput } from "./prompt-input.js";
 import {
   detectMetaRequestKind,
   metaSystemPrompt,
@@ -260,6 +263,7 @@ export async function startProxy(): Promise<number> {
 }
 
 export async function stopProxy(): Promise<void> {
+  clearAllBridges();
   if (server) {
     server.stop(true);
     server = null;
@@ -363,11 +367,15 @@ async function handleChatCompletions(
   if (metaKind === "summary") {
     // OpenCode has compacted its history; resuming the old Claude session would
     // restore the pre-compaction context and make the next usage snapshot jump.
+    deleteBridgesByConversation(baseConversationKey);
     clearForeignSessionId(baseConversationKey);
   }
   const selection = selectionFromRequest(req, body);
   const model = resolveClaudeModelId(selection.modelId);
   const stream = body.stream !== false;
+  const requestDirectory = req.headers.get(DIRECTORY_HEADER)?.trim();
+  const cwd =
+    process.env.OPENCODE_CLAUDE_CWD || requestDirectory || process.cwd();
 
   // Resume a parked bridge if OpenCode returned tool results.
   const toolResults = collectToolResults(messages);
@@ -441,9 +449,6 @@ async function handleChatCompletions(
 
   const openCodeTools = Array.isArray(body.tools) ? body.tools : [];
   const isMetaRequest = metaKind !== null;
-  const requestDirectory = req.headers.get(DIRECTORY_HEADER)?.trim();
-  const cwd =
-    process.env.OPENCODE_CLAUDE_CWD || requestDirectory || process.cwd();
   const bridgeId = randomUUID();
   const pendingTools = new Map<string, ParkedToolCall>();
   let handle: ClaudeQueryHandle | null = null;
@@ -521,6 +526,24 @@ async function handleChatCompletions(
     );
   }
 
+  if (
+    existing?.persistent &&
+    !existing.closed &&
+    existing.input &&
+    existing.continueStream
+  ) {
+    if (existing.modelId !== model || existing.cwd !== cwd) {
+      deleteBridge(existing.id);
+      existing = undefined;
+    } else {
+      existing.input.push(toSdkUserPrompt(prompt));
+      const continued = existing.continueStream();
+      return stream
+        ? streamOpenAIResponse(continued, body.model || model, existing)
+        : collectTurnResponse(continued, body.model || model, existing);
+    }
+  }
+
   let resume = getForeignSessionId(conversationKey);
   if (resume && !findClaudeSessionFile(resume)) {
     // The claude CLI resumes by looking the session up on disk. A missing
@@ -584,7 +607,7 @@ async function handleChatCompletions(
   const titleSource = [...messages]
     .reverse()
     .find((message) => message.role === "user");
-  const queryPrompt: string | AsyncIterable<SdkUserPrompt> = metaKind === "title"
+  const queryPrompt: string | SdkUserPrompt = metaKind === "title"
     ? [
         "Create a concise 3-7 word session title for the request quoted below.",
         "Output only the title, with no quotation marks or punctuation at the end.",
@@ -596,7 +619,15 @@ async function handleChatCompletions(
       ].join("\n")
     : typeof contextualPrompt === "string"
       ? contextualPrompt || " "
-      : promptAsStream(contextualPrompt);
+      : contextualPrompt;
+  const persistentInput = isMetaRequest
+    ? undefined
+    : createClaudePromptInput(toSdkUserPrompt(queryPrompt));
+  const sdkPrompt: string | AsyncIterable<SdkUserPrompt> = persistentInput
+    ? persistentInput.stream
+    : typeof queryPrompt === "string"
+      ? queryPrompt
+      : promptAsStream(queryPrompt);
 
   const hasTodoWrite = openCodeToolNames.includes("todowrite");
   const utilitySystemPrompt = isMetaRequest
@@ -608,7 +639,7 @@ async function handleChatCompletions(
         ].filter(Boolean).join("\n\n")
     : undefined;
   handle = await queryStarter({
-    prompt: queryPrompt,
+    prompt: sdkPrompt,
     cwd,
     model,
     resume: isMetaRequest ? undefined : resume,
@@ -657,6 +688,7 @@ async function handleChatCompletions(
         : {}),
     },
   });
+  const streamIterator = handle.stream[Symbol.asyncIterator]();
 
   const bridge: ParkedBridge = {
     id: bridgeId,
@@ -665,11 +697,17 @@ async function handleChatCompletions(
     pendingTools,
     seenAssistantUsageIds: new Set(),
     createdAt: Date.now(),
+    input: persistentInput,
+    streamIterator,
+    persistent: !isMetaRequest,
+    modelId: model,
+    cwd,
   };
   putBridge(bridge);
 
   async function* consumeStream(): AsyncGenerator<unknown, void, unknown> {
-    const iterator = handle!.stream[Symbol.asyncIterator]();
+    const iterator = streamIterator;
+    let keepBridge = false;
     try {
       while (true) {
         const parkControl = {
@@ -731,6 +769,7 @@ async function handleChatCompletions(
         }
 
         if (raced.kind === "park" || (parked && pendingTools.size > 0)) {
+          keepBridge = true;
           parkControl.cancel?.();
           await Promise.resolve();
           // The iterator's pending next() may already have consumed the
@@ -763,10 +802,13 @@ async function handleChatCompletions(
           });
         }
         yield event;
+        if (isTurnBoundary(event)) {
+          keepBridge = bridge.persistent === true && !isErrorResult(event);
+          return;
+        }
       }
     } finally {
-      if (!parked) {
-        handle?.close();
+      if (!keepBridge && !bridge.closed) {
         deleteBridge(bridgeId);
       }
     }
@@ -791,6 +833,32 @@ async function handleChatCompletions(
     return streamOpenAIResponse(probe.replay, body.model || model, bridge);
   }
   return collectTurnResponse(consumeStream(), body.model || model, bridge);
+}
+
+function toSdkUserPrompt(prompt: string | SdkUserPrompt): SdkUserPrompt {
+  if (typeof prompt !== "string") return prompt;
+  return {
+    type: "user",
+    message: { role: "user", content: prompt },
+    parent_tool_use_id: null,
+  };
+}
+
+function isTurnBoundary(event: unknown): boolean {
+  return (
+    !!event &&
+    typeof event === "object" &&
+    (event as { type?: unknown }).type === "result"
+  );
+}
+
+function isErrorResult(event: unknown): boolean {
+  return (
+    !!event &&
+    typeof event === "object" &&
+    (event as { type?: unknown; is_error?: unknown }).type === "result" &&
+    (event as { is_error?: unknown }).is_error === true
+  );
 }
 
 
