@@ -3,6 +3,7 @@
  * (Cursor bridge-pool pattern).
  */
 import type { ClaudeQueryHandle } from "./query.js";
+import type { ClaudePromptInput } from "./prompt-input.js";
 import type { OpenAIUsage } from "./usage.js";
 
 export type ParkedToolCall = {
@@ -25,6 +26,12 @@ export type ParkedBridge = {
   createdAt: number;
   /** Continues consuming the SDK stream after tools resolve. */
   continueStream?: () => AsyncGenerator<unknown, void, unknown>;
+  input?: ClaudePromptInput;
+  streamIterator?: AsyncIterator<unknown>;
+  persistent?: boolean;
+  closed?: boolean;
+  modelId?: string;
+  cwd?: string;
 };
 
 const bridges = new Map<string, ParkedBridge>();
@@ -37,6 +44,8 @@ export function putBridge(bridge: ParkedBridge): void {
         tool.reject(new Error("Superseded by a newer turn"));
       }
       existing.pendingTools.clear();
+      existing.input?.close();
+      existing.closed = true;
       try {
         existing.handle.close();
       } catch {
@@ -70,12 +79,20 @@ export function findBridgeByPendingTool(
   return undefined;
 }
 
+export function deleteBridgesByConversation(conversationKey: string): void {
+  for (const [id, bridge] of bridges) {
+    if (bridge.conversationKey === conversationKey) deleteBridge(id);
+  }
+}
+
 export function deleteBridge(id: string): void {
   const bridge = bridges.get(id);
   if (!bridge) return;
+  bridge.closed = true;
   for (const tool of bridge.pendingTools.values()) {
     tool.reject(new Error("Bridge closed"));
   }
+  bridge.input?.close();
   bridge.handle.close();
   bridges.delete(id);
 }
