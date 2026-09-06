@@ -36,6 +36,26 @@ export type ParkedBridge = {
 
 const bridges = new Map<string, ParkedBridge>();
 
+/**
+ * Closing the prompt input tears the SDK stream down synchronously, which put
+ * multi-second latency directly on the response path: every turn paid to close
+ * the previous turn's bridge before it could proceed. Defer it to the next
+ * macrotask instead. The stream still closes and the leak this lifecycle work
+ * fixes stays fixed — it just no longer happens while a request is waiting.
+ */
+function closeInputDeferred(bridge: ParkedBridge): void {
+  const input = bridge.input;
+  if (!input) return;
+  setTimeout(() => {
+    try {
+      input.close();
+    } catch {
+      // teardown is best-effort
+    }
+  }, 0);
+}
+
+
 export function putBridge(bridge: ParkedBridge): void {
   // One active bridge per conversation — drop any prior turn for this key.
   for (const [id, existing] of bridges) {
@@ -44,7 +64,7 @@ export function putBridge(bridge: ParkedBridge): void {
         tool.reject(new Error("Superseded by a newer turn"));
       }
       existing.pendingTools.clear();
-      existing.input?.close();
+      closeInputDeferred(existing);
       existing.closed = true;
       try {
         existing.handle.close();
@@ -92,7 +112,7 @@ export function deleteBridge(id: string): void {
   for (const tool of bridge.pendingTools.values()) {
     tool.reject(new Error("Bridge closed"));
   }
-  bridge.input?.close();
+  closeInputDeferred(bridge);
   bridge.handle.close();
   bridges.delete(id);
 }
