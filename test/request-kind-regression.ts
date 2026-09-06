@@ -26,6 +26,10 @@ const updateSummaryMessages = [
 
 assert.equal(detectMetaRequestKind(updateSummaryMessages), "summary");
 assert.equal(
+  detectMetaRequestKind([{ role: "user", content: "<prior-summary>old</prior-summary>" }]),
+  "summary",
+);
+assert.equal(
   detectMetaRequestKind([
     { role: "system", content: "You are a coding assistant." },
     { role: "user", content: "fix a bug" },

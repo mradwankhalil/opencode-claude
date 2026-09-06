@@ -88,8 +88,9 @@ try {
   ]);
   assert.equal(continuationResponse.status, 200);
   assert.deepEqual(resumes, [undefined, undefined]);
+  const continuationPrompt = await firstPromptText(prompts[1]);
   assert.match(
-    String(prompts[1]),
+    continuationPrompt,
     /<conversation_history>[\s\S]*compacted work[\s\S]*<\/conversation_history>/,
   );
 } finally {
@@ -100,4 +101,10 @@ try {
   else process.env.XDG_DATA_HOME = previousDataHome;
   if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
   else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+}
+
+async function firstPromptText(prompt: string | AsyncIterable<unknown>): Promise<string> {
+  if (typeof prompt === "string") return prompt;
+  const next = await prompt[Symbol.asyncIterator]().next();
+  return JSON.stringify(next.value);
 }
