@@ -161,6 +161,12 @@ type ChatCompletionRequest = {
 let server: ReturnType<typeof Bun.serve> | null = null;
 let proxyPort: number | null = null;
 
+// fix: external-compaction boundary — last message count seen per conversation
+// (namespaced key). A normal-turn request shorter than its predecessor means
+// the history was rewritten (compaction done by ANY provider) and the parked
+// Claude bridge must be reset before the turn resumes it.
+const conversationMessageCounts = new Map<string, number>();
+
 /** Injectable for smoke tests — production path always uses startClaudeQuery. */
 let queryStarter: typeof startClaudeQuery = startClaudeQuery;
 
@@ -410,6 +416,29 @@ async function handleChatCompletions(
     deleteBridgesByConversation(baseConversationKey);
     clearForeignSessionId(baseConversationKey);
   }
+
+  // fix: external-compaction boundary — the summarize may run on a DIFFERENT
+  // provider (OMO pins compaction to MiniMax-M3 etc.) and never passes through
+  // this proxy, so the text-based summary detection above never fires and the
+  // parked bridge would resume the full pre-compaction CLI conversation
+  // (~780K cacheRead that never shrinks — ses_f10e47816). Detect the boundary
+  // structurally instead: a normal-turn request whose message list is SHORTER
+  // than the previous request for the same conversation means the history was
+  // rewritten (compacted by anyone) — reset the bridge and the foreign session.
+  const lastMessageCount = conversationMessageCounts.get(conversationKey);
+  if (lastMessageCount !== undefined && messages.length < lastMessageCount) {
+    log.info(
+      "[opencode-claude] history shrank between turns: resetting bridge (external compaction)",
+      {
+        conversationKey: baseConversationKey,
+        previousMessages: lastMessageCount,
+        currentMessages: messages.length,
+      },
+    );
+    deleteBridgesByConversation(baseConversationKey);
+    clearForeignSessionId(baseConversationKey);
+  }
+  conversationMessageCounts.set(conversationKey, messages.length);
   const selection = selectionFromRequest(req, body);
   const model = resolveClaudeModelId(selection.modelId);
   const stream = body.stream !== false;
