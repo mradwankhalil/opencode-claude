@@ -15,4 +15,16 @@ assert.deepEqual(
   },
 );
 
+assert.deepEqual(
+  models.find((model) => model.id === "claude-sonnet-5-5"),
+  {
+    id: "claude-sonnet-5-5",
+    name: "Sonnet 5.5",
+    reasoning: true,
+    contextWindow: 1_000_000,
+    inputWindow: 900_000,
+    maxTokens: 128_000,
+  },
+);
+
 console.log("ok - Claude model catalog tests passed");
