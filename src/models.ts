@@ -46,14 +46,19 @@ function model(
   };
 }
 
+// Aliases track the LATEST model of that family (claude --model help, v2.1.282).
+// Labelled "(latest)" so the drift is explicit rather than a version that silently goes stale.
 const ALIAS_MODELS: ClaudeModel[] = [
-  model("fable", "Fable 5", LIMIT_1M),
-  model("opus", "Opus 5", LIMIT_1M),
-  model("sonnet", "Sonnet 5", LIMIT_1M),
-  model("haiku", "Haiku 4.5", LIMIT_200K, "claude-haiku-4-5"),
+  model("fable", "Fable 5 (latest)", LIMIT_1M),
+  model("opus", "Opus 5.5 (latest)", LIMIT_1M),
+  model("sonnet", "Sonnet 5 (latest)", LIMIT_1M),
+  model("haiku", "Haiku 4.5 (latest)", LIMIT_200K, "claude-haiku-4-5"),
 ];
 
 const PINNED_MODELS: ClaudeModel[] = [
+  // Explicit ids pin a version, so they do not drift when an alias advances.
+  model("claude-fable-5-1", "Fable 5.1", LIMIT_1M),
+  model("claude-opus-5-5", "Opus 5.5", LIMIT_1M),
   model("claude-opus-4-8", "Opus 4.8", LIMIT_1M),
   model("claude-sonnet-4-6", "Sonnet 4.6", LIMIT_1M),
   model("claude-haiku-4-5", "Haiku 4.5", LIMIT_200K),
