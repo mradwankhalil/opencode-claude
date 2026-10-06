@@ -42,12 +42,21 @@ function model(
   };
 }
 
-/**
- * Fallback catalog for before the CLI has reported its own list (first
- * start, CLI missing or signed out). Same concrete ids as discovery.
- * OpenCode only runs listed models, so a session that picked a 1.0 alias
- * (`opus[1m]`, `sonnet`) asks the user to pick a model once.
- */
+const ALIAS_MODELS: ClaudeModel[] = [
+  model("fable", "Fable 5 (latest)", LIMIT_1M, "claude-fable-5-1"),
+  model("opus", "Opus 5.5 (latest)", LIMIT_1M, "claude-opus-5-5"),
+  model("sonnet", "Sonnet 5 (latest)", LIMIT_1M, "claude-sonnet-5-5"),
+];
+
+const PINNED_MODELS: ClaudeModel[] = [
+  model("claude-fable-5-1", "Fable 5.1", LIMIT_1M),
+  model("claude-opus-5-5", "Opus 5.5", LIMIT_1M),
+  model("claude-opus-4-8", "Opus 4.8", LIMIT_1M),
+  model("claude-sonnet-5-5", "Sonnet 5.5", LIMIT_1M),
+  model("claude-sonnet-4-6", "Sonnet 4.6", LIMIT_1M),
+];
+
+/** CLI-derived entries used before discovery, in addition to always-on entries. */
 const FALLBACK_MODELS: ClaudeModel[] = [
   model("claude-opus-5-5[1m]", "Opus 5.5", LIMIT_1M),
   model("claude-fable-5-1[1m]", "Fable 5.1", LIMIT_1M),
@@ -134,7 +143,9 @@ export function modelsFromSdk(rows: SdkModelRow[]): ClaudeModel[] {
 let discovered: ClaudeModel[] | null = readCachedModels();
 
 function buildCatalog(): ClaudeModel[] {
-  return discovered?.length ? discovered : FALLBACK_MODELS;
+  const seen = new Set<string>();
+  return [...ALIAS_MODELS, ...PINNED_MODELS, ...(discovered ?? FALLBACK_MODELS)]
+    .filter((model) => !seen.has(model.id) && seen.add(model.id));
 }
 
 export function getClaudeModels(): ClaudeModel[] {
