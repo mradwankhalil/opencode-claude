@@ -28,6 +28,7 @@ import {
   type ParkedToolCall,
 } from "./bridge-pool.js";
 import { buildClaudeCodeChildEnv, MCP_DESCRIPTION_LIMIT } from "./auth-env.js";
+import { ExclusivePumpGate, SerializedAsyncIterator } from "./serialized-iterator.js";
 import {
   classifyClaudeFailure,
   failureCodeFor,
@@ -953,12 +954,12 @@ async function handleChatCompletions(
       });
       return stream
         ? streamOpenAIResponse(
-            existing.continueStream(),
+            existing.continueStream(req.signal),
             body.model || model,
             existing,
           )
         : collectTurnResponse(
-            existing.continueStream(),
+            existing.continueStream(req.signal),
             body.model || model,
             existing,
           );
@@ -1097,6 +1098,7 @@ async function startNewTurn(input: {
   const cwd =
     process.env.OPENCODE_CLAUDE_CWD || requestDirectory || process.cwd();
   const bridgeId = randomUUID();
+  const pumpGate = new ExclusivePumpGate();
   const pendingTools = new Map<string, ParkedToolCall>();
   let handle: StoppableClaudeQueryHandle | null = null;
   let parked = false;
@@ -1104,9 +1106,6 @@ async function startNewTurn(input: {
   // The assistant message is still streaming: sibling tool calls may follow
   // the one that parked, so the park is held until the message closes.
   let messageOpen = false;
-  // next() that was in flight when the turn parked; consumed on resume so
-  // the event it carries is not lost.
-  let pendingNext: Promise<IteratorResult<unknown>> | null = null;
 
   // OpenCode tool names of the tool_use blocks in the current message.
   let messageToolNames: string[] = [];
@@ -1632,6 +1631,8 @@ async function startNewTurn(input: {
     systemPrompt: isMetaRequest ? UTILITY_SYSTEM_PROMPT : chatSystemPrompt,
   }));
 
+  // All continuations share the same read, including one interrupted by a park.
+  const serializedIterator = new SerializedAsyncIterator(handle.stream[Symbol.asyncIterator]());
   const bridge: ParkedBridge = {
     id: bridgeId,
     conversationKey,
@@ -1689,8 +1690,10 @@ async function startNewTurn(input: {
     reapTimer.unref?.();
   };
 
-  async function* consumeStream(): AsyncGenerator<unknown, void, unknown> {
-    const iterator = handle!.stream[Symbol.asyncIterator]();
+  async function* consumeStream(
+    requestSignal: AbortSignal = req.signal,
+  ): AsyncGenerator<unknown, void, unknown> {
+    const releasePump = await pumpGate.acquire();
     // Set once the calls are handed to OpenCode. A stream that ends or fails
     // while a park is still held is a dead turn, not a parked one.
     let handedOff = false;
@@ -1700,6 +1703,7 @@ async function startNewTurn(input: {
     let retryWaitMs = 0;
     try {
       while (true) {
+        requestSignal.throwIfAborted();
         // Parked and the message is closed: hand every collected call to
         // OpenCode in one response. Claude Code already grouped the calls it
         // may run side by side (readOnlyHint ones); here they are only
@@ -1760,8 +1764,13 @@ async function startNewTurn(input: {
           stallTimer.unref?.();
         });
 
-        const nextPromise = pendingNext ?? iterator.next();
-        pendingNext = null;
+        const nextPromise = serializedIterator.next();
+        let abortListener: (() => void) | undefined;
+        const abortPromise = new Promise<never>((_, reject) => {
+          abortListener = () => reject(new DOMException("Request aborted", "AbortError"));
+          requestSignal.addEventListener("abort", abortListener, { once: true });
+          if (requestSignal.aborted) abortListener();
+        });
         let raced:
           | { kind: "event"; value: IteratorResult<unknown> }
           | { kind: "park" }
@@ -1772,9 +1781,10 @@ async function startNewTurn(input: {
             parkPromise.then(() => ({ kind: "park" as const })),
             quietPromise.then(() => ({ kind: "quiet" as const })),
             stallPromise,
+            abortPromise,
           ]);
         } catch (error) {
-          // Stall watchdog fired — the turn is dead. Swallow the late
+          // Stall watchdog or client abort — the turn is dead. Swallow the late
           // iterator settlement so it cannot surface as an unhandled
           // rejection after we throw.
           nextPromise.then(
@@ -1783,22 +1793,22 @@ async function startNewTurn(input: {
           );
           throw error;
         } finally {
+          if (abortListener) requestSignal.removeEventListener("abort", abortListener);
+          parkControl.cancel?.();
           if (stallTimer) clearTimeout(stallTimer);
           if (quietTimer) clearTimeout(quietTimer);
         }
 
-        parkControl.cancel?.();
         if (raced.kind === "park") {
           // Keep the in-flight next(); the loop top decides whether to hold.
-          pendingNext = nextPromise;
           continue;
         }
         if (raced.kind === "quiet") {
-          pendingNext = nextPromise;
           if (!messageOpen) settled = true;
           messageOpen = false;
           continue;
         }
+        serializedIterator.release(nextPromise);
         if (raced.value.done) break;
         const event = raced.value.value;
         if (fastMode) logFastModeState(event, conversationKey);
@@ -1831,8 +1841,11 @@ async function startNewTurn(input: {
           modelFallbackHandler?.(sessionHeader, target, selection.effort);
         }
         yield event;
+        // The next pump owns events after this turn's result.
+        if (isTurnBoundary(event)) return;
       }
     } finally {
+      releasePump();
       if (!handedOff) {
         turnInput?.end();
         handle?.close();
@@ -1841,11 +1854,11 @@ async function startNewTurn(input: {
     }
   }
 
-  bridge.continueStream = async function* () {
+  bridge.continueStream = async function* (requestSignal?: AbortSignal) {
     clearParkReap();
     parked = false;
     parkWaiters = [];
-    yield* consumeStream();
+    yield* consumeStream(requestSignal);
   };
 
   // A turn that dies BEFORE producing any content (bad token, session limit,
@@ -1896,6 +1909,10 @@ function mainChainUuid(event: unknown): string | undefined {
   if (e.parent_tool_use_id) return undefined;
   if (e.isReplay === true) return undefined;
   return typeof e.uuid === "string" && e.uuid ? e.uuid : undefined;
+}
+
+function isTurnBoundary(event: unknown): boolean {
+  return typeof event === "object" && event !== null && "type" in event && event.type === "result";
 }
 
 function extractSessionId(event: unknown): string | null {

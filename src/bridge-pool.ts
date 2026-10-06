@@ -32,7 +32,7 @@ export type ParkedBridge = {
   /** Open input of a chat turn: mid-turn user messages go in here. */
   input?: TurnInput;
   /** Continues consuming the SDK stream after tools resolve. */
-  continueStream?: () => AsyncGenerator<unknown, void, unknown>;
+  continueStream?: (requestSignal?: AbortSignal) => AsyncGenerator<unknown, void, unknown>;
 };
 
 /**
