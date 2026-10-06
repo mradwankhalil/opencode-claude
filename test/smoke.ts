@@ -522,9 +522,9 @@ async function main() {
   assert.ok(models.length >= 4);
   assert.ok(models.some((m) => m.id === "claude-sonnet-5"));
   assert.ok(models.some((m) => m.id === "claude-opus-5-5[1m]"));
-  // 1.0 aliases are no longer listed; the proxy itself still passes them on
-  assert.ok(!models.some((m) => m.id === "opus" || m.id === "sonnet"));
-  assert.equal(resolveClaudeModelId("sonnet"), "sonnet");
+  assert.ok(models.some((m) => m.id === "opus"));
+  assert.ok(models.some((m) => m.id === "sonnet"));
+  assert.equal(resolveClaudeModelId("sonnet"), "claude-sonnet-5-5");
   assert.equal(resolveClaudeModelId("opus[1m]"), "opus[1m]");
 
   const sonnet = getClaudeModels().find((m) => m.id === "claude-sonnet-5")!;
@@ -551,7 +551,7 @@ async function main() {
     assert.equal(row!.name, "Opus 5");
   }
 
-  // The CLI's own model list becomes the catalog, with t3code's 1M rules
+  // The CLI's list augments the catalog, retaining t3code's 1M rules.
   {
     const fromCli = modelsFromSdk([
       { value: "default", displayName: "Default (recommended)", resolvedModel: "claude-opus-5-5", supportedEffortLevels: ["low", "high"] },
@@ -574,8 +574,10 @@ async function main() {
     assert.deepEqual(buildEffortVariants(byId["claude-haiku-4-5-20251001"]!), []);
     assert.equal(setDiscoveredModels(fromCli), true);
     const ids = getClaudeModels().map((m) => m.id);
-    assert.ok(!ids.includes("fable"), "old aliases are not listed");
-    assert.equal(resolveClaudeModelId("fable"), "fable", "old aliases still reach the CLI");
+    assert.ok(ids.includes("fable"), "aliases survive discovery");
+    for (const row of fromCli) assert.ok(ids.includes(row.id));
+    assert.equal(new Set(ids).size, ids.length);
+    assert.equal(resolveClaudeModelId("fable"), "claude-fable-5-1");
     assert.equal(setDiscoveredModels(fromCli), false, "unchanged list is not a change");
   }
   assert.equal(isClaudeEffort("nope"), false);
