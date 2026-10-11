@@ -3,7 +3,7 @@
 Base: upstream **v1.3.8**, `d02d1fd`. Branch: `v2/bundle-all`.
 The obsolete dryrun remains at `v2/dryrun-preserved` (`1a9a309`); do not modify it.
 
-## Runtime delta (two commits)
+## Runtime delta (three commits)
 
 1. Pump serialization: cherry-pick of `9db4544ff321080417426e771e44118abe4a8cfa`
    (`fix: serialize continuation pumps and close aborted turns`), upstream
@@ -12,7 +12,22 @@ The obsolete dryrun remains at `v2/dryrun-preserved` (`1a9a309`); do not modify 
    discovery (or fallback), deduplicated by ID with static entries winning.
    Discovery, caching, refresh and `[1m]` entries retain upstream behavior.
 
-The third commit contains verification, regression coverage, build wiring and this doc.
+3. Provider-first setup (2026-10-11, incident "claude-code provider
+   disconnected"): `setup` registers the provider and the `model.request`
+   hook before it binds the proxy or probes the CLI, and one CLI presence
+   answer (5 min, shared while pending) serves every location. OpenCode v2
+   unloads every plugin ordered after a changed one and sets them up again
+   while sessions keep stepping; the runner awaits plugin activation only when
+   a drain starts, so a later step that resolved its model before this
+   plugin's registration landed failed with
+   `Model unavailable: claude-code/claude-opus-5-5`. Markers:
+   `registeredBaseUrl`, `setSetupProbes`; fixture
+   `test/setup-order-regression.ts`. This narrows the gap to the time the
+   plugins ordered before this one need; the rest is OpenCode's
+   (anomalyco/opencode, see the incident report) and the plugin order in
+   `opencode.json`. Upstream candidate for openchamber/opencode-claude.
+
+The verification commit contains regression coverage, build wiring and this doc.
 PR #44 was **closed unmerged** (2026-10-06; maintainer: upstream's one-query-per-turn
 architecture doesn't create concurrent pumps — but that rationale doesn't cover the
 abort-signal handle leak, a single-lifecycle defect; issue #43 remains OPEN). The pump
@@ -52,12 +67,24 @@ advance. Bare pins never drift.
    OPENCHAMBER_RUNTIME= timeout 60 bun test/persistent-continuation-lifecycle-regression.ts
    OPENCHAMBER_RUNTIME= timeout 60 bun test/persistent-park-race-regression.ts
    OPENCHAMBER_RUNTIME= timeout 60 bun test/catalog-exposure-regression.ts
+   OPENCHAMBER_RUNTIME= timeout 60 bun test/setup-order-regression.ts
    OPENCHAMBER_RUNTIME= timeout 85 bun test/run.ts
    ```
 
    Also run LSP diagnostics on changed TypeScript files. Only the documented
    Windows/POSIX fixture failures in `smoke.ts` and `cli-probes-regression.ts`
    are expected on this workstation; a catalog failure is never an exemption.
+   **Never run `bun run build` while OpenChamber is running**: its prebuild
+   deletes `dist/`, and OpenCode watches `dist/index.js`, so every open
+   location unloads this plugin mid-build and running Claude sessions fail.
+   Build a staged bundle instead and check it:
+
+   ```bash
+   bun build src/index.ts --target=node --packages=external --outfile=../opencode-claude-v2-staged/dist/index.js
+   node scripts/verify-bundle.mjs ../opencode-claude-v2-staged/dist/index.js
+   ```
+
+   Copy it over `dist/index.js` only while OpenChamber is closed.
 6. Only after those checks is the lane safe for a **user-controlled restart**.
    Then verify v2 `opencode models` exposes the bare pins. No restart, live
    Claude request, publish or push is part of this procedure's build phase.
