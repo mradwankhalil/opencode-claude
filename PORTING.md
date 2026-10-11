@@ -77,14 +77,17 @@ advance. Bare pins never drift.
    **Never run `bun run build` while OpenChamber is running**: its prebuild
    deletes `dist/`, and OpenCode watches `dist/index.js`, so every open
    location unloads this plugin mid-build and running Claude sessions fail.
-   Build a staged bundle instead and check it:
+   Build a staged bundle instead (typecheck, bundle into
+   `../opencode-claude-v2-staged/`, marker check, `lane.json` with commit and hash):
 
    ```bash
-   bun build src/index.ts --target=node --packages=external --outfile=../opencode-claude-v2-staged/dist/index.js
-   node scripts/verify-bundle.mjs ../opencode-claude-v2-staged/dist/index.js
+   node scripts/stage-bundle.mjs
+   pwsh -NoProfile -File scripts/activate-staged.ps1 -Status   # exit 2 = staged, not active
    ```
 
-   Copy it over `dist/index.js` only while OpenChamber is closed.
+   With OpenChamber fully closed, `pwsh -NoProfile -File scripts/activate-staged.ps1`
+   backs up the live `dist/index.js` and swaps the staged one in; `-Rollback`
+   restores the newest backup. It refuses to run while OpenChamber or opencode is up.
 6. Only after those checks is the lane safe for a **user-controlled restart**.
    Then verify v2 `opencode models` exposes the bare pins. No restart, live
    Claude request, publish or push is part of this procedure's build phase.
