@@ -882,24 +882,23 @@ async function handleChatCompletions(
       }
     }
   }
-  // A chat can be compacted without its summary passing through here: the
-  // user's compaction model belongs to another provider. Nothing stopped the
-  // parked turn then, so check the history as a new turn does below. A turn
-  // parked on a history OpenCode no longer has would re-emit its old calls
-  // with the old context size, and OpenCode would compact again, in a loop.
   if (existing && metaKind === null && existing.pendingTools.size > 0) {
+    // A different provider can summarize this chat without calling our summary
+    // route. Validate the history before the parked-turn fast path, just as a
+    // new turn does below. Otherwise we replay the old tools and context usage
+    // forever, even though OpenCode has already replaced that history.
     const match = matchTurnHistory(
       getSessionTurns(existing.conversationKey),
       userHistoryFingerprints(messages),
     );
     if (match.kind === "diverged" || match.kind === "rewind") {
-      log.warn("[opencode-claude] OpenCode history no longer matches the parked turn; stopping it", {
+      log.info("[opencode-claude] parked-history-boundary-changed", {
         conversationKey: existing.conversationKey,
         match: match.kind,
       });
-      await stopConversationBridges(existing.conversationKey, "Chat history replaced");
-      // Its pending calls must not take results from the new history. The
-      // new turn below resumes, forks or transfers as for any changed history.
+      await stopConversationBridges(existing.conversationKey, "OpenCode history replaced");
+      // startNewTurn retains the existing fork/transfer logic for persisted
+      // bindings. Do not resolve old tools with results from the new history.
       existing = undefined;
     }
   }

@@ -29,7 +29,7 @@ try {
   check("dist/index.js is readable", false);
   console.error(error instanceof Error ? error.message : String(error));
 }
-for (const marker of ["ExclusivePumpGate", "SerializedAsyncIterator", "registeredBaseUrl", "setSetupProbes"]) {
+for (const marker of ["ExclusivePumpGate", "SerializedAsyncIterator", "registeredBaseUrl", "setSetupProbes", "parked-history-boundary-changed"]) {
   check(`bundle contains ${marker}`, bundle.includes(marker));
 }
 // provider-first: the provider registers before setup binds the proxy or probes the CLI.
