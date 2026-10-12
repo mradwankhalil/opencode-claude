@@ -20,7 +20,8 @@ async function main() {
       }
       return interruptibleTurn(log, `turn-${turn}`, async function* () {
         yield { type: "system", subtype: "init", session_id: `claude-${turn}` };
-        await callTool(params, "bash", { command: turn === 1 ? "old-work" : "new-work" });
+        const result = await callTool(params, "bash", { command: turn === 1 ? "old-work" : "new-work" });
+        assert.ok(!JSON.stringify(result).includes("restore checkpointed"));
         yield textDelta("continued from current history");
         yield { type: "result", is_error: false, usage: { input_tokens: 1000, output_tokens: 10 } };
       });
