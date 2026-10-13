@@ -17,7 +17,7 @@ function git(args) {
 
 const branch = git(["branch", "--show-current"]);
 check("branch is v2/bundle-all", branch.status === 0 && branch.stdout.trim() === "v2/bundle-all");
-check("d02d1fd is an ancestor of HEAD", git(["merge-base", "--is-ancestor", "d02d1fd", "HEAD"]).status === 0);
+check("8692d3e is an ancestor of HEAD", git(["merge-base", "--is-ancestor", "8692d3e", "HEAD"]).status === 0);
 
 // Pass a path to check a staged bundle before it replaces the live one.
 const bundlePath = process.argv[2] ?? new URL("../dist/index.js", import.meta.url);
@@ -29,17 +29,16 @@ try {
   check("dist/index.js is readable", false);
   console.error(error instanceof Error ? error.message : String(error));
 }
-for (const marker of ["ExclusivePumpGate", "SerializedAsyncIterator", "registeredBaseUrl", "setSetupProbes", "parked-history-boundary-changed"]) {
+for (const marker of ["ExclusivePumpGate", "SerializedAsyncIterator", "parked-history-boundary-changed"]) {
   check(`bundle contains ${marker}`, bundle.includes(marker));
 }
-// provider-first: the provider registers before setup binds the proxy or probes the CLI.
+// provider-first (upstream since v1.4.1): the provider registers before setup probes the CLI.
 const setupStart = bundle.indexOf("async setup(ctx)");
 const providerAt = bundle.indexOf("ctx.provider.transform(", setupStart);
-const proxyAt = bundle.indexOf("await acquireProxy()", setupStart);
 const probeAt = bundle.indexOf("await probeCliPresence()", setupStart);
 check(
-  "setup registers the provider before the proxy bind and the CLI probe",
-  setupStart >= 0 && providerAt > setupStart && providerAt < proxyAt && providerAt < probeAt,
+  "setup registers the provider before the CLI probe",
+  setupStart >= 0 && providerAt > setupStart && providerAt < probeAt,
 );
 for (const id of [
   "claude-fable-5-1", "claude-opus-5-5", "claude-opus-4-8",
