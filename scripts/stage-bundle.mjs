@@ -2,6 +2,7 @@
 // dist/index.js, and `bun run build` deletes dist/ first, so building in place
 // unloads this plugin in every open location and fails running Claude sessions.
 // Run: node scripts/stage-bundle.mjs   (then scripts/activate-staged.ps1 with OpenChamber closed)
+// From a clone: node scripts/stage-bundle.mjs --lane <live checkout>   (stages beside that checkout)
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -9,7 +10,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const staged = join(root, "..", "opencode-claude-v2-staged");
+const laneArg = process.argv.indexOf("--lane");
+const laneRoot = laneArg > 0 ? process.argv[laneArg + 1] : root;
+const staged = join(laneRoot, "..", "opencode-claude-v2-staged");
 const outfile = join(staged, "dist", "index.js");
 const windows = process.platform === "win32";
 
@@ -47,8 +50,9 @@ const lane = {
   branch: run("git branch", "git", ["branch", "--show-current"]),
   staged: outfile,
   stagedSha256: sha256(outfile),
-  live: join(root, "dist", "index.js"),
-  liveSha256AtBuild: sha256(join(root, "dist", "index.js")),
+  live: join(laneRoot, "dist", "index.js"),
+  liveSha256AtBuild: sha256(join(laneRoot, "dist", "index.js")),
+  ...(laneRoot === root ? {} : { source: root }),
 };
 writeFileSync(join(staged, "lane.json"), `${JSON.stringify(lane, null, 2)}\n`);
 console.log(`staged ${lane.stagedSha256.slice(0, 12)} from ${lane.commit.slice(0, 7)} -> ${outfile}`);

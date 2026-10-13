@@ -35,17 +35,17 @@ try {
     assert.equal(initial.find((model) => model.id === alias)?.resolvedId, concrete);
     assert.equal(resolveClaudeModelId(alias), concrete);
   }
-  for (const id of ["claude-opus-5-5[1m]", "claude-fable-5-1[1m]", "claude-sonnet-5[1m]"]) {
+  for (const id of ["claude-opus-5-5[1m]", "claude-fable-5-1[1m]", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5", "claude-haiku-4-5", "claude-opus-4-8"]) {
     assert.ok(initial.some((model) => model.id === id), `missing fallback: ${id}`);
   }
 
   // Given catalog entries; when converting them to native v2 provider models.
   const providerModels = buildClaudeProviderModels(initial);
-  // Then pins retain the input cap and thinking choices without request settings.
+  // Then pins carry no input cap (upstream #48) and keep thinking choices without request settings.
   for (const id of required) {
     const entry = providerModels.find((model) => model.id === id);
     assert.ok(entry);
-    assert.deepEqual(entry.limit, { context: 1_000_000, input: 900_000, output: 128_000 });
+    assert.deepEqual(entry.limit, { context: 1_000_000, output: 128_000 });
     assert.deepEqual(entry.variants, ["low", "medium", "high", "xhigh", "max"].map((id) => ({ id })));
   }
 
