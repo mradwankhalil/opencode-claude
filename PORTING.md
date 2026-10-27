@@ -1,9 +1,10 @@
 # v2 bundle porting
 
-Base: upstream **v1.5.0**, `8692d3e`. Branch: `v2/bundle-all`.
+Base: upstream **v1.6.0**, `507cb87` (rebased 2026-10-27 from v1.5.0 `8692d3e`; pre-rebase head kept as
+branch `backup/v2-bundle-all-pre-v1.6.0`). Branch: `v2/bundle-all`.
 The obsolete dryrun remains at `v2/dryrun-preserved` (`1a9a309`); do not modify it.
 
-## Runtime delta (three fixes)
+## Runtime delta (four fixes)
 
 1. Pump serialization: cherry-pick of `9db4544ff321080417426e771e44118abe4a8cfa`
    (`fix: serialize continuation pumps and close aborted turns`), upstream
@@ -26,7 +27,31 @@ The obsolete dryrun remains at `v2/dryrun-preserved` (`1a9a309`); do not modify 
    and the local `restore checkpointed` assertion is retained in the fixture.
    Rechecked on v1.5.0: the fixture passes with this commit; the full suite is 46/49 with only the documented Windows/POSIX exceptions.
 
+4. Tool content from OpenCode 2.x (2026-10-27): OpenCode 2.x returns tool output as
+   content parts and the openai-compatible request carries a tool message's content as a
+   string, so the parts arrive JSON-encoded (`[{"type":"text",...},{"type":"file",
+   "uri":"data:image/...","mime":...}]`). Relayed as text, every tool result reached
+   Claude wrapped in JSON and images arrived as base64 text the model could not see.
+   `decodeToolMessageContent` decodes exactly that shape for tool messages; file parts
+   also accept `uri`. Marker: `decodeToolMessageContent`; fixture:
+   `test/tool-json-content-regression.ts`. Upstream: issue to be filed (see the tracks
+   registry, `Documents/ai/storage/upstream-tracks`). Retire when an upstream release
+   passes that fixture.
+
 The verification commit contains regression coverage, build wiring and this doc.
+
+### v1.6.0 rebase notes (2026-10-27)
+
+- One conflict: `src/bridge-pool.ts`, where v1.6.0 added `configDir` next to the
+  `continueStream` signature the pump fix changes. Both kept.
+- Full suite 47/51. The four failures are environmental and fail identically on stock
+  v1.6.0: `smoke.ts`, `cli-probes-regression.ts`, `setup-order-regression.ts`
+  (fake CLI `calls.log` ENOENT on Windows) and upstream's new
+  `config-dirs-regression.ts` (expects `/cfg/work`, Windows resolves `C:\cfg\work`).
+- #43 retest on stock v1.6.0: `persistent-continuation-lifecycle-regression.ts` fails
+  ("resumed continuation did not close its SDK handle"), `persistent-pump-concurrency`
+  hangs, `pump-gate` has no module to test; the fork passes all three. Upstream has no
+  equivalent, so the pump fix stays (decision recorded below).
 
 ### Pump serialization: a local carry with no upstream path
 
