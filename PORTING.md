@@ -79,7 +79,7 @@ shows OpenCode v2 never sends a non-streaming resumed request to this proxy and 
 runs two consumers on one continuation; until then it stays, and every rebase must keep
 those five fixtures green.
 
-The catalog patch is an upstream issue candidate, not yet filed. Carry the verification
+The catalog patch is filed upstream as [#72](https://github.com/openchamber/opencode-claude/issues/72) (2026-10-27). Carry the verification
 commit too.
 
 ### Retired
